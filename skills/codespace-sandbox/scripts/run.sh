@@ -39,27 +39,48 @@ cleanup=not_created error= exit_code=1 duration=0 created=0 child= watchdog= end
 command_exit_code=null artifact_status=not_requested
 marker="sandbox-$(date +%s)-${work##*.}"
 # A portable watchdog bounds CLI calls without GNU timeout. Children are reaped.
+cancel_watchdog() {
+  [ -n "$watchdog" ] || return 0
+  # A signal sent before the subshell installs its trap can be lost, including
+  # USR1 on older shells. Wait for the trap and sleeper PID to be initialized.
+  cancel_deadline=$(( $(date +%s) + 3 ))
+  while [ ! -f "$watchdog_ready" ]; do
+    if ! kill -0 "$watchdog" 2>/dev/null || [ "$(date +%s)" -ge "$cancel_deadline" ]; then
+      kill -KILL "$watchdog" 2>/dev/null || :
+      wait "$watchdog" 2>/dev/null || :
+      return 1
+    fi
+    sleep 0
+  done
+  kill -USR1 "$watchdog" 2>/dev/null || :
+  wait "$watchdog" 2>/dev/null || :
+}
 bounded() {
   limit=$1; shift
   sequence=$((sequence + 1))
   timed_out="$work/timed-out-$sequence"
+  watchdog_ready="$work/watchdog-ready-$sequence"
   exec 3<&0
   "$@" <&3 3<&- & child=$!
   exec 3<&-
   (
     sleeper=
-    # USR1 can terminate the watchdog before this trap is installed. Reusing
-    # the runner's trapped TERM can lose cancellation for fast commands in dash.
     trap '[ -z "$sleeper" ] || { kill "$sleeper" 2>/dev/null || :; wait "$sleeper" 2>/dev/null || :; }; exit 0' USR1 TERM INT HUP
-    sleep "$limit" & sleeper=$!; wait "$sleeper"; sleeper=
+    sleep "$limit" & sleeper=$!
+    printf '%s\n' ready >"$watchdog_ready" || {
+      kill -KILL "$child" 2>/dev/null || :
+      kill "$sleeper" 2>/dev/null || :
+      wait "$sleeper" 2>/dev/null || :
+      exit 1
+    }
+    wait "$sleeper"; sleeper=
     : >"$timed_out"
     kill -TERM "$child" 2>/dev/null || :
     sleep 2 & sleeper=$!; wait "$sleeper"; sleeper=
     kill -KILL "$child" 2>/dev/null || :
   ) </dev/null >/dev/null 2>&1 & watchdog=$!
   wait "$child"; bounded_status=$?
-  kill -USR1 "$watchdog" 2>/dev/null || :
-  wait "$watchdog" 2>/dev/null || :
+  cancel_watchdog || bounded_status=1
   child= watchdog=
   if [ -f "$timed_out" ]; then return 124; fi
   return "$bounded_status"
@@ -82,7 +103,7 @@ finish() {
   ending=1
   trap '' HUP INT TERM
   if [ -n "$child" ]; then kill -KILL "$child" 2>/dev/null || :; wait "$child" 2>/dev/null || :; fi
-  if [ -n "$watchdog" ]; then kill -USR1 "$watchdog" 2>/dev/null || :; wait "$watchdog" 2>/dev/null || :; fi
+  cancel_watchdog || :
   # A lost create response can still represent a successful allocation.
   if [ "$created" -eq 1 ] && [ -z "$name" ]; then reconcile || :; fi
   if [ -n "$name" ]; then
