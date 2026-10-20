@@ -48,7 +48,9 @@ bounded() {
   exec 3<&-
   (
     sleeper=
-    trap '[ -z "$sleeper" ] || { kill "$sleeper" 2>/dev/null || :; wait "$sleeper" 2>/dev/null || :; }; exit 0' TERM INT HUP
+    # USR1 can terminate the watchdog before this trap is installed. Reusing
+    # the runner's trapped TERM can lose cancellation for fast commands in dash.
+    trap '[ -z "$sleeper" ] || { kill "$sleeper" 2>/dev/null || :; wait "$sleeper" 2>/dev/null || :; }; exit 0' USR1 TERM INT HUP
     sleep "$limit" & sleeper=$!; wait "$sleeper"; sleeper=
     : >"$timed_out"
     kill -TERM "$child" 2>/dev/null || :
@@ -56,7 +58,7 @@ bounded() {
     kill -KILL "$child" 2>/dev/null || :
   ) </dev/null >/dev/null 2>&1 & watchdog=$!
   wait "$child"; bounded_status=$?
-  kill "$watchdog" 2>/dev/null || :
+  kill -USR1 "$watchdog" 2>/dev/null || :
   wait "$watchdog" 2>/dev/null || :
   child= watchdog=
   if [ -f "$timed_out" ]; then return 124; fi
@@ -80,7 +82,7 @@ finish() {
   ending=1
   trap '' HUP INT TERM
   if [ -n "$child" ]; then kill -KILL "$child" 2>/dev/null || :; wait "$child" 2>/dev/null || :; fi
-  if [ -n "$watchdog" ]; then kill "$watchdog" 2>/dev/null || :; wait "$watchdog" 2>/dev/null || :; fi
+  if [ -n "$watchdog" ]; then kill -USR1 "$watchdog" 2>/dev/null || :; wait "$watchdog" 2>/dev/null || :; fi
   # A lost create response can still represent a successful allocation.
   if [ "$created" -eq 1 ] && [ -z "$name" ]; then reconcile || :; fi
   if [ -n "$name" ]; then

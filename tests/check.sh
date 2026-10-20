@@ -15,10 +15,11 @@ for script in skills/environment-preflight/scripts/preflight.sh skills/html-sess
   [ -x "$script" ]
   sh -n "$script"
 done
-for script in tests/check.sh tests/skills/smoke.sh tests/skills/serve-smoke.sh tests/skills/codespace-smoke.sh; do sh -n "$script"; done
+for script in tests/check.sh tests/skills/smoke.sh tests/skills/serve-smoke.sh tests/skills/codespace-smoke.sh tests/skills/codespace-watchdog.sh; do sh -n "$script"; done
 sh tests/skills/smoke.sh
 sh tests/skills/serve-smoke.sh
 sh tests/skills/codespace-smoke.sh
+sh tests/skills/codespace-watchdog.sh
 if command -v zsh >/dev/null 2>&1; then
   TEST_SHELL=$(command -v zsh) sh tests/skills/smoke.sh
   TEST_SHELL=$(command -v zsh) sh tests/skills/serve-smoke.sh
