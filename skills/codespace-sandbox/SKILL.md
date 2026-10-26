@@ -69,7 +69,9 @@ justification or explicit user instruction. Artifact paths refer to repository
 files/directories; retrieve only approved nonconfidential outputs. Never upload
 logs or artifacts publicly.
 
-Defaults are 300 seconds for remote execution and 180 seconds for provisioning.
+Defaults are 300 seconds for remote execution and 600 seconds for provisioning,
+which leaves room for custom devcontainer builds. The provisioning timeout counts
+toward the estimated usage, so lower it for prebuilt images when allowance is tight.
 `--output` must name a new absolute directory. The helper writes `result.json`,
 `stdout.log`, `stderr.log`, and relevant lifecycle/transfer diagnostics there.
 The result separates `command_exit_code` (null if unavailable) from the overall

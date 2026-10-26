@@ -3,7 +3,7 @@
 set -u
 umask 077
 repo= ref= command= machine= output= artifact= billing_owner= core_budget= storage_budget=
-timeout=300 provision_timeout=180
+timeout=300 provision_timeout=600
 usage() {
   echo 'Usage: run.sh --repo OWNER/REPO --ref REF --command COMMAND --output DIR --billing-owner LOGIN --included-core-hours N --included-storage-gb-hours N [--machine NAME] [--timeout SECONDS] [--provision-timeout SECONDS] [--artifact RELATIVE_PATH]' >&2
   exit 2
