@@ -2,18 +2,22 @@
 # Disposable Codespaces runner. No account-wide mutations.
 set -u
 umask 077
-repo= ref= command= machine= output= artifact= billing_owner= core_budget= storage_budget=
-timeout=300 provision_timeout=180
+repo= ref= command= machine= output= artifact= billing_owner= zero_budget=0
+timeout=300 provision_timeout=600
 usage() {
-  echo 'Usage: run.sh --repo OWNER/REPO --ref REF --command COMMAND --output DIR --billing-owner LOGIN --included-core-hours N --included-storage-gb-hours N [--machine NAME] [--timeout SECONDS] [--provision-timeout SECONDS] [--artifact RELATIVE_PATH]' >&2
+  echo 'Usage: run.sh --repo OWNER/REPO --ref REF --command COMMAND --output DIR --billing-owner LOGIN --zero-budget-confirmed [--machine NAME] [--timeout SECONDS] [--provision-timeout SECONDS] [--artifact RELATIVE_PATH]' >&2
   exit 2
 }
 while [ "$#" -gt 0 ]; do
+  case $1 in
+    --zero-budget-confirmed) zero_budget=1; shift; continue;;
+    --included-core-hours|--included-storage-gb-hours)
+      echo "$1 was replaced by --zero-budget-confirmed." >&2; usage;;
+  esac
   [ "$#" -ge 2 ] || usage
   case $1 in
     --repo) repo=$2;; --ref) ref=$2;; --command) command=$2;; --machine) machine=$2;;
     --output) output=$2;; --artifact) artifact=$2;; --billing-owner) billing_owner=$2;;
-    --included-core-hours) core_budget=$2;; --included-storage-gb-hours) storage_budget=$2;;
     --timeout) timeout=$2;; --provision-timeout) provision_timeout=$2;; *) usage;;
   esac
   shift 2
@@ -36,7 +40,7 @@ output=$(cd "$output" && pwd) || exit 2
 work=$(mktemp -d "${TMPDIR:-/tmp}/codespace-sandbox.XXXXXXXX") || exit 2
 name= login= sha= cpus= disk= estimated_core= estimated_storage=
 cleanup=not_created error= exit_code=1 duration=0 created=0 child= watchdog= ending=0 sequence=0
-command_exit_code=null artifact_status=not_requested
+command_exit_code=null artifact_status=not_requested reported_usage=null
 marker="sandbox-$(date +%s)-${work##*.}"
 # A portable watchdog bounds CLI calls without GNU timeout. Children are reaped.
 cancel_watchdog() {
@@ -50,7 +54,8 @@ cancel_watchdog() {
       wait "$watchdog" 2>/dev/null || :
       return 1
     fi
-    sleep 0
+    # Fractional sleep is not POSIX; fall back to whole seconds where unsupported.
+    sleep 0.05 2>/dev/null || sleep 1
   done
   kill -USR1 "$watchdog" 2>/dev/null || :
   wait "$watchdog" 2>/dev/null || :
@@ -132,7 +137,8 @@ finish() {
     --arg error "$error" --argjson exit_code "$exit_code" \
     --argjson command_exit_code "$command_exit_code" --arg artifact_status "$artifact_status" \
     --argjson duration_seconds "$duration" --arg core "$estimated_core" \
-    --arg storage "$estimated_storage" --arg billing_owner "$billing_owner" --arg marker "$marker" '
+    --arg storage "$estimated_storage" --arg billing_owner "$billing_owner" --arg marker "$marker" \
+    --argjson reported_usage "$reported_usage" '
     {repository:$repository, commit:$commit, machine:$machine, command:$command,
      codespace:$codespace, display_name:$marker, billing_owner:$billing_owner,
      exit_code:$exit_code, command_exit_code:$command_exit_code,
@@ -141,7 +147,8 @@ finish() {
        if $cleanup == "deleted" or $cleanup == "not_created" then []
        elif $codespace != "" then [$codespace] else ["unknown; inspect display_name"] end),
      error:$error, estimated_usage:{core_hours:(try ($core | tonumber) catch null),
-       storage_gb_hours:(try ($storage | tonumber) catch null), actual_billing:false}}
+       storage_gb_hours:(try ($storage | tonumber) catch null), actual_billing:false},
+     reported_usage:$reported_usage}
   ' >"$output/result.json" || {
     echo 'Cannot write structured result.' >&2
     [ "$exit_code" -ne 0 ] || exit_code=1
@@ -150,27 +157,48 @@ finish() {
   echo "Result: $output/result.json" >&2
 }
 fail() { exit_code=1; error=$1; echo "$error" >&2; exit 1; }
+# Preflight diagnostics are kept so a generic failure still names its cause.
+preflight() {
+  preflight_label=$1; shift
+  api "$@" 2>"$output/preflight-$preflight_label.stderr"; preflight_status=$?
+  return "$preflight_status"
+}
+preflight_fail() {
+  if [ "$preflight_status" -eq 124 ]; then
+    detail='request timed out'
+  else
+    detail=$(sed -n '/[^[:space:]]/{p;q;}' "$output/preflight-$preflight_label.stderr" 2>/dev/null | cut -c1-200)
+  fi
+  if [ -n "$detail" ]; then fail "$1 Cause: $detail"; else fail "$1"; fi
+}
 trap 'finish' EXIT
 trap 'exit_code=130; error=interrupted; exit 130' INT
 trap 'exit_code=143; error=terminated; exit 143' HUP TERM
 bounded 30 gh auth status >"$output/preflight.stdout" 2>"$output/preflight.stderr" || fail 'GitHub authentication unavailable.'
-api user >"$work/user.json" || fail 'Cannot establish authenticated user.'
+preflight user user >"$work/user.json" || preflight_fail 'Cannot establish authenticated user.'
 login=$(jq -er .login "$work/user.json") || fail 'Missing authenticated identity.'
-# Allowance is an explicit assertion of independently verified remaining included
-# capacity. Usage reports alone do not establish fresh remaining entitlement.
-[ -n "$billing_owner" ] && [ -n "$core_budget" ] && [ -n "$storage_budget" ] || fail 'Provide verified billing owner and remaining included compute/storage allowances; missing billing data is not free capacity.'
-jq -en --arg c "$core_budget" --arg s "$storage_budget" '($c|tonumber) > 0 and ($s|tonumber) > 0' >/dev/null 2>&1 || fail 'Invalid included allowance.'
-api "repos/$repo/commits/$ref" >"$work/commit.json" || fail 'Invalid repository or ref.'
+# A $0 Codespaces budget that stops usage at the limit is what prevents charges;
+# no API reports remaining included capacity. The user confirms that setting.
+[ -n "$billing_owner" ] && [ "$zero_budget" -eq 1 ] || fail 'Provide the billing owner and --zero-budget-confirmed after confirming its Codespaces budget is $0 and stops usage at the limit.'
+preflight commit "repos/$repo/commits/$ref" >"$work/commit.json" || preflight_fail 'Invalid repository or ref.'
 sha=$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' "$work/commit.json") || fail 'Cannot resolve exact commit.'
-api -X GET "repos/$repo/codespaces/new" -f "ref=$sha" >"$work/options.json" || fail 'Cannot establish Codespaces billing ownership.'
-jq -e --arg owner "$billing_owner" '.billable_owner.login == $owner' "$work/options.json" >/dev/null || fail 'Billing ownership does not match the verified allowance.'
-# This endpoint reports usage, not guaranteed remaining included capacity.
-if api -X GET "users/$billing_owner/settings/billing/usage" -f "year=$(date +%Y)" -f "month=$(date +%m)" >"$work/billing.json" 2>"$work/billing.err"; then
-  echo 'Billing usage endpoint accessible; included allowance still requires independent verification.' >"$output/billing-status.log"
+preflight options -X GET "repos/$repo/codespaces/new" -f "ref=$sha" >"$work/options.json" || preflight_fail 'Cannot establish Codespaces billing ownership.'
+jq -e --arg owner "$billing_owner" '.billable_owner.login == $owner' "$work/options.json" >/dev/null || fail 'Billing ownership does not match the confirmed budget owner.'
+# This endpoint reports usage, not remaining included capacity. The summary is
+# informational only; it is never a quota.
+usage_year=$(date +%Y) usage_month=$(date +%m)
+if api -X GET "users/$billing_owner/settings/billing/usage" -f "year=$usage_year" -f "month=$usage_month" >"$work/billing.json" 2>"$output/billing-usage.stderr"; then
+  reported_usage=$(jq -c --arg period "$usage_year-$usage_month" '
+    {period:$period, items:([(.usageItems // [])[] | select((.product // "") | ascii_downcase == "codespaces")]
+      | group_by([.sku, .unitType])
+      | map({sku:.[0].sku, unit_type:.[0].unitType, quantity:(map(.quantity // 0) | add), net_amount:(map(.netAmount // 0) | add)}))}
+  ' "$work/billing.json" 2>/dev/null) || reported_usage=null
+  [ -n "$reported_usage" ] || reported_usage=null
+  echo 'Billing usage endpoint accessible; summary is informational only.' >"$output/billing-status.log"
 else
-  echo 'Billing usage endpoint unavailable; no free capacity inferred.' >"$output/billing-status.log"
+  echo 'Billing usage endpoint unavailable; no usage summary recorded.' >"$output/billing-status.log"
 fi
-api -X GET "repos/$repo/codespaces/machines" -f "ref=$sha" >"$work/machines.json" || fail 'Cannot discover supported machines.'
+preflight machines -X GET "repos/$repo/codespaces/machines" -f "ref=$sha" >"$work/machines.json" || preflight_fail 'Cannot discover supported machines.'
 if [ -z "$machine" ]; then
   machine=$(jq -er '.machines | map(select(.cpus > 0 and .storage_in_bytes > 0)) | sort_by(.cpus,.storage_in_bytes) | .[0].name // empty' "$work/machines.json") || fail 'No supported machine available.'
 fi
@@ -179,7 +207,6 @@ cpus=$(jq -r .cpus "$work/machine.json")
 disk=$(jq -r '.storage_in_bytes / 1000000000' "$work/machine.json")
 estimated_core=$(jq -n --argjson c "$cpus" --argjson t "$timeout" --argjson p "$provision_timeout" '$c * ($t+$p+300)/3600')
 estimated_storage=$(jq -n --argjson d "$disk" --argjson t "$timeout" --argjson p "$provision_timeout" '$d * ($t+$p+300+3600)/3600')
-jq -en --argjson ec "$estimated_core" --argjson es "$estimated_storage" --arg c "$core_budget" --arg s "$storage_budget" '$ec <= ($c|tonumber) and $es <= ($s|tonumber)' >/dev/null || fail 'Estimated usage exceeds verified remaining included allowance.'
 ssh-keygen -q -t ed25519 -N '' -f "$work/key" || fail 'Cannot create temporary SSH identity.'
 jq -n --arg ref "$sha" --arg machine "$machine" --arg display "$marker" '{ref:$ref,machine:$machine,display_name:$display,idle_timeout_minutes:5,retention_period_minutes:60,multi_repo_permissions_opt_out:true}' >"$work/create.json"
 created=1
@@ -196,7 +223,8 @@ while :; do
   sleep 1
 done
 owned || fail 'Created Codespace ownership is ambiguous; refusing remote execution.'
-jq -e '.prebuild == false' "$work/identity.json" >/dev/null || fail 'Prebuild status is unknown or enabled; outside this runner policy.'
+# The REST schema allows null; only an explicit true means a prebuild was used.
+jq -e 'has("prebuild") and .prebuild != true' "$work/identity.json" >/dev/null || fail 'Prebuild status is missing or a prebuild was used; outside this runner policy.'
 jq -e --arg machine "$machine" '.machine.name == $machine and .idle_timeout_minutes == 5 and .retention_period_minutes <= 60 and .retention_period_minutes > 0' "$work/identity.json" >/dev/null || fail 'Codespace allocation does not match requested safeguards.'
 # The dynamic heredoc delimiter is checked against the full requested command.
 # Test status is read independently because gh ssh may collapse remote exits.

@@ -3,7 +3,7 @@
 Use authenticated `gh` against github.com. The CLI and API are separate interfaces:
 CLI JSON fields are camelCase; REST JSON fields are snake_case. Validate response
 types and required fields before using them. An unavailable endpoint is not proof
-of available allowance.
+of available allowance; the $0 budget below is the cost boundary.
 
 ## Read-only preparation
 
@@ -69,7 +69,8 @@ resource still consumes storage until deletion.
 The documented create interfaces have no per-request switch to disable existing
 prebuild consumption. Do not configure or generate prebuilds. Inspect the created
 resource's `prebuild` field and refuse execution, then clean up, if a prebuild was
-used. Do not claim the API disables prebuilds before creation.
+used. The REST schema allows `null`; treat only `true` as prebuild use, and a
+missing field as unknown. Do not claim the API disables prebuilds before creation.
 
 Sources: [create CLI](https://cli.github.com/manual/gh_codespace_create),
 [SSH CLI](https://cli.github.com/manual/gh_codespace_ssh),
@@ -93,13 +94,13 @@ reservation or guarantee real-time consumption. An empty result or zero net
 amount does not establish fresh compute and storage headroom. Do not derive free
 capacity merely from a plan name or the absence of a payment method field.
 
-Check accessible usage data, but require freshly established included compute
-and storage headroom and the correct payer before provisioning under a zero-paid
-budget. Account settings or explicit user confirmation can supply missing facts;
-never invent them. Other concurrent resources and delayed billing data can
-consume headroom. Estimates must include provisioning and execution, and storage
-until verified deletion; label estimates separately from GitHub usage data.
-Never change payment settings, budgets, or spending limits.
+Because remaining headroom cannot be established, the cost boundary is the billing
+owner's Codespaces budget: $0 and set to stop usage at the limit, so usage past
+the included allowance is blocked rather than billed. Require the user's
+confirmation of that setting and the correct payer before provisioning; never
+infer it. Usage data and estimates (provisioning, execution, and storage until
+verified deletion) are informational; label estimates separately from GitHub
+usage data. Never change payment settings, budgets, or spending limits.
 
 Classic/OAuth tokens require `codespace` for Codespaces lifecycle APIs. Fine-grained
 tokens require the relevant repository Codespaces permissions; machine discovery
