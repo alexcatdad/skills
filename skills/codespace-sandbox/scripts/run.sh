@@ -2,18 +2,22 @@
 # Disposable Codespaces runner. No account-wide mutations.
 set -u
 umask 077
-repo= ref= command= machine= output= artifact= billing_owner= core_budget= storage_budget=
+repo= ref= command= machine= output= artifact= billing_owner= zero_budget=0
 timeout=300 provision_timeout=600
 usage() {
-  echo 'Usage: run.sh --repo OWNER/REPO --ref REF --command COMMAND --output DIR --billing-owner LOGIN --included-core-hours N --included-storage-gb-hours N [--machine NAME] [--timeout SECONDS] [--provision-timeout SECONDS] [--artifact RELATIVE_PATH]' >&2
+  echo 'Usage: run.sh --repo OWNER/REPO --ref REF --command COMMAND --output DIR --billing-owner LOGIN --zero-budget-confirmed [--machine NAME] [--timeout SECONDS] [--provision-timeout SECONDS] [--artifact RELATIVE_PATH]' >&2
   exit 2
 }
 while [ "$#" -gt 0 ]; do
+  case $1 in
+    --zero-budget-confirmed) zero_budget=1; shift; continue;;
+    --included-core-hours|--included-storage-gb-hours)
+      echo "$1 was replaced by --zero-budget-confirmed." >&2; usage;;
+  esac
   [ "$#" -ge 2 ] || usage
   case $1 in
     --repo) repo=$2;; --ref) ref=$2;; --command) command=$2;; --machine) machine=$2;;
     --output) output=$2;; --artifact) artifact=$2;; --billing-owner) billing_owner=$2;;
-    --included-core-hours) core_budget=$2;; --included-storage-gb-hours) storage_budget=$2;;
     --timeout) timeout=$2;; --provision-timeout) provision_timeout=$2;; *) usage;;
   esac
   shift 2
@@ -173,16 +177,15 @@ trap 'exit_code=143; error=terminated; exit 143' HUP TERM
 bounded 30 gh auth status >"$output/preflight.stdout" 2>"$output/preflight.stderr" || fail 'GitHub authentication unavailable.'
 preflight user user >"$work/user.json" || preflight_fail 'Cannot establish authenticated user.'
 login=$(jq -er .login "$work/user.json") || fail 'Missing authenticated identity.'
-# Allowance is an explicit assertion of independently verified remaining included
-# capacity. Usage reports alone do not establish fresh remaining entitlement.
-[ -n "$billing_owner" ] && [ -n "$core_budget" ] && [ -n "$storage_budget" ] || fail 'Provide verified billing owner and remaining included compute/storage allowances; missing billing data is not free capacity.'
-jq -en --arg c "$core_budget" --arg s "$storage_budget" '($c|tonumber) > 0 and ($s|tonumber) > 0' >/dev/null 2>&1 || fail 'Invalid included allowance.'
+# A $0 Codespaces budget that stops usage at the limit is what prevents charges;
+# no API reports remaining included capacity. The user confirms that setting.
+[ -n "$billing_owner" ] && [ "$zero_budget" -eq 1 ] || fail 'Provide the billing owner and --zero-budget-confirmed after confirming its Codespaces budget is $0 and stops usage at the limit.'
 preflight commit "repos/$repo/commits/$ref" >"$work/commit.json" || preflight_fail 'Invalid repository or ref.'
 sha=$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' "$work/commit.json") || fail 'Cannot resolve exact commit.'
 preflight options -X GET "repos/$repo/codespaces/new" -f "ref=$sha" >"$work/options.json" || preflight_fail 'Cannot establish Codespaces billing ownership.'
-jq -e --arg owner "$billing_owner" '.billable_owner.login == $owner' "$work/options.json" >/dev/null || fail 'Billing ownership does not match the verified allowance.'
-# This endpoint reports usage, not guaranteed remaining included capacity. The
-# summary helps the user re-check the asserted allowance; it is never a quota.
+jq -e --arg owner "$billing_owner" '.billable_owner.login == $owner' "$work/options.json" >/dev/null || fail 'Billing ownership does not match the confirmed budget owner.'
+# This endpoint reports usage, not remaining included capacity. The summary is
+# informational only; it is never a quota.
 usage_year=$(date +%Y) usage_month=$(date +%m)
 if api -X GET "users/$billing_owner/settings/billing/usage" -f "year=$usage_year" -f "month=$usage_month" >"$work/billing.json" 2>"$output/billing-usage.stderr"; then
   reported_usage=$(jq -c --arg period "$usage_year-$usage_month" '
@@ -191,9 +194,9 @@ if api -X GET "users/$billing_owner/settings/billing/usage" -f "year=$usage_year
       | map({sku:.[0].sku, unit_type:.[0].unitType, quantity:(map(.quantity // 0) | add), net_amount:(map(.netAmount // 0) | add)}))}
   ' "$work/billing.json" 2>/dev/null) || reported_usage=null
   [ -n "$reported_usage" ] || reported_usage=null
-  echo 'Billing usage endpoint accessible; included allowance still requires independent verification.' >"$output/billing-status.log"
+  echo 'Billing usage endpoint accessible; summary is informational only.' >"$output/billing-status.log"
 else
-  echo 'Billing usage endpoint unavailable; no free capacity inferred.' >"$output/billing-status.log"
+  echo 'Billing usage endpoint unavailable; no usage summary recorded.' >"$output/billing-status.log"
 fi
 preflight machines -X GET "repos/$repo/codespaces/machines" -f "ref=$sha" >"$work/machines.json" || preflight_fail 'Cannot discover supported machines.'
 if [ -z "$machine" ]; then
@@ -204,7 +207,6 @@ cpus=$(jq -r .cpus "$work/machine.json")
 disk=$(jq -r '.storage_in_bytes / 1000000000' "$work/machine.json")
 estimated_core=$(jq -n --argjson c "$cpus" --argjson t "$timeout" --argjson p "$provision_timeout" '$c * ($t+$p+300)/3600')
 estimated_storage=$(jq -n --argjson d "$disk" --argjson t "$timeout" --argjson p "$provision_timeout" '$d * ($t+$p+300+3600)/3600')
-jq -en --argjson ec "$estimated_core" --argjson es "$estimated_storage" --arg c "$core_budget" --arg s "$storage_budget" '$ec <= ($c|tonumber) and $es <= ($s|tonumber)' >/dev/null || fail 'Estimated usage exceeds verified remaining included allowance.'
 ssh-keygen -q -t ed25519 -N '' -f "$work/key" || fail 'Cannot create temporary SSH identity.'
 jq -n --arg ref "$sha" --arg machine "$machine" --arg display "$marker" '{ref:$ref,machine:$machine,display_name:$display,idle_timeout_minutes:5,retention_period_minutes:60,multi_repo_permissions_opt_out:true}' >"$work/create.json"
 created=1

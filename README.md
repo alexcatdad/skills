@@ -9,7 +9,7 @@ skills remain in their owning projects.
 | --- | --- |
 | `environment-preflight` | Verify task prerequisites on the execution host and intended target. |
 | `html-session-progress` | Render a private HTML progress report with optional Tailscale Serve integration. |
-| `codespace-sandbox` | Run bounded tests/builds in a disposable GitHub Codespace with allowance checks, results, and verified cleanup. |
+| `codespace-sandbox` | Run bounded tests/builds in a disposable GitHub Codespace with a $0-budget check, results, and verified cleanup. |
 
 Each complete package lives in `skills/<name>/`, including its scripts and assets.
 Use POSIX sh or Zsh with native Unix utilities; structured HTML rendering needs
@@ -70,8 +70,8 @@ Linux and macOS. Native Zsh tests run when Zsh is available. These checks do not
 establish execution inside every agent client, live Tailscale connectivity, or
 live Codespaces provisioning. The Codespaces tests use mocked CLI responses and
 synthetic fixtures. Live execution requires separate Codespaces permissions and
-verified remaining included compute/storage allowance; missing billing evidence
-blocks creation. See [the skill](skills/codespace-sandbox/SKILL.md) for invocation
+a user-confirmed $0 Codespaces budget that stops usage at the limit; without that
+confirmation the helper refuses creation. See [the skill](skills/codespace-sandbox/SKILL.md) for invocation
 and cleanup recovery.
 
 Keep changes scoped to reusable skills, retain package-relative paths and public

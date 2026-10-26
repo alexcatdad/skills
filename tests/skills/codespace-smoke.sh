@@ -112,7 +112,7 @@ run_case() {
   interrupter=$!
  fi
  set +e
- sh "$runner" --repo fixture/repo --ref feature --command 'printf "synthetic success\n"' --billing-owner synthetic --included-core-hours 10 --included-storage-gb-hours 100 --output "$output" "$@" > "$tmp/stdout" 2> "$tmp/stderr" &
+ sh "$runner" --repo fixture/repo --ref feature --command 'printf "synthetic success\n"' --billing-owner synthetic --zero-budget-confirmed --output "$output" "$@" > "$tmp/stdout" 2> "$tmp/stderr" &
  runner_pid=$!
  echo "$runner_pid" > "$tmp/runner.pid"
  wait "$runner_pid"; status=$?
@@ -130,10 +130,19 @@ run_case invalid_repo --repo fixture/missing
 [ "$status" -ne 0 ]; no_creation
 run_case machine --machine absent
 [ "$status" -ne 0 ]; no_creation
-run_case budget --included-core-hours 0
+run_case old_budget_flag --included-core-hours 10
+[ "$status" -eq 2 ]; no_creation
+grep -q 'replaced by --zero-budget-confirmed' "$tmp/stderr"
+run_case missing_budget --billing-owner ''
 [ "$status" -ne 0 ]; no_creation
-run_case missing_budget --included-core-hours ''
+# The budget confirmation is required; run_case always passes it.
+MOCK_CASE=missing_confirmation; export MOCK_CASE
+rm -f "$tmp/mutations"; output="$tmp/result-missing_confirmation"
+set +e
+sh "$runner" --repo fixture/repo --ref feature --command true --billing-owner synthetic --output "$output" > "$tmp/stdout" 2> "$tmp/stderr"; status=$?
+set -e
 [ "$status" -ne 0 ]; no_creation
+jq -e '.cleanup == "not_created" and (.error | contains("--zero-budget-confirmed"))' "$output/result.json" >/dev/null
 run_case owner --billing-owner unknown
 [ "$status" -ne 0 ]; no_creation
 run_case scope
@@ -203,4 +212,4 @@ run_case ownership
 [ "$status" -ne 0 ]; [ -f "$tmp/resource.json" ]
 ! grep -q '^delete$' "$tmp/mutations"
 for repetition in 1 2 3; do run_case success; [ "$status" -eq 0 ]; cleaned; done
-printf '%s\n' 'PASS: mocked authentication, preflight diagnostics, billing usage, prebuild status, refs, machines, budget, ownership, provisioning, execution, timeout, artifacts, cleanup and repeated runs.'
+printf '%s\n' 'PASS: mocked authentication, preflight diagnostics, billing usage, prebuild status, refs, machines, budget confirmation, ownership, provisioning, execution, timeout, artifacts, cleanup and repeated runs.'
