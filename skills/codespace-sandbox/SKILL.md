@@ -73,7 +73,12 @@ Defaults are 300 seconds for remote execution and 180 seconds for provisioning.
 `--output` must name a new absolute directory. The helper writes `result.json`,
 `stdout.log`, `stderr.log`, and relevant lifecycle/transfer diagnostics there.
 The result separates `command_exit_code` (null if unavailable) from the overall
-`exit_code`, records `artifact_status`, and lists `remaining_resources`. Process
+`exit_code`, records `artifact_status`, and lists `remaining_resources`. Preflight
+failures include the GitHub CLI's first diagnostic line in `error`, with full
+stderr saved as `preflight-*.stderr`. When the billing usage endpoint is
+accessible, `reported_usage` summarizes the current month's Codespaces items as
+GitHub reports them (null otherwise); use it to re-check the asserted allowance,
+never as proof of remaining capacity. Process
 exit 124 indicates a command timeout, 130/143 interruption, and 1 an operational
 failure; an available remote command failure is propagated unchanged.
 

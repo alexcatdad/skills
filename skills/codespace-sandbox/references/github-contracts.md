@@ -69,7 +69,8 @@ resource still consumes storage until deletion.
 The documented create interfaces have no per-request switch to disable existing
 prebuild consumption. Do not configure or generate prebuilds. Inspect the created
 resource's `prebuild` field and refuse execution, then clean up, if a prebuild was
-used. Do not claim the API disables prebuilds before creation.
+used. The REST schema allows `null`; treat only `true` as prebuild use, and a
+missing field as unknown. Do not claim the API disables prebuilds before creation.
 
 Sources: [create CLI](https://cli.github.com/manual/gh_codespace_create),
 [SSH CLI](https://cli.github.com/manual/gh_codespace_ssh),

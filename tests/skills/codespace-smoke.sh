@@ -34,8 +34,11 @@ if [ "$1" = api ]; then
    [ "$MOCK_CASE" != ref ] || exit 1
    printf '%s\n' '{"sha":"1111111111111111111111111111111111111111"}';;
   repos/fixture/repo/codespaces/new)
+   if [ "$MOCK_CASE" = scope ]; then printf '%s\n' 'gh: This API operation needs the "codespace" scope. To request it, run:  gh auth refresh -h github.com -s codespace' >&2; exit 1; fi
    printf '%s\n' '{"billable_owner":{"login":"synthetic"},"defaults":{"geo":"EuropeWest"}}';;
-  users/synthetic/settings/billing/usage) exit 1;;
+  users/synthetic/settings/billing/usage)
+   [ "$MOCK_CASE" != billing_unavailable ] || exit 1
+   printf '%s\n' '{"usageItems":[{"product":"Codespaces","sku":"Codespaces compute 2-core","unitType":"Hours","quantity":1.5,"netAmount":0},{"product":"codespaces","sku":"Codespaces compute 2-core","unitType":"Hours","quantity":0.5,"netAmount":0},{"product":"Codespaces","sku":"Codespaces storage","unitType":"GigabyteHours","quantity":40,"netAmount":0},{"product":"Actions","sku":"Actions Linux","unitType":"Minutes","quantity":90,"netAmount":0}]}';;
   repos/fixture/repo/codespaces/machines)
    printf '%s\n' '{"machines":[{"name":"large","cpus":8,"memory_in_bytes":17179869184,"storage_in_bytes":68719476736},{"name":"small","cpus":2,"memory_in_bytes":4294967296,"storage_in_bytes":34359738368}]}';;
   repos/fixture/repo/codespaces)
@@ -52,6 +55,8 @@ if [ "$1" = api ]; then
    case "$MOCK_CASE" in
     ownership) jq '.owner.login="someone-else"' "$MOCK_DIR/resource.json";;
     prebuild) jq '.prebuild=true' "$MOCK_DIR/resource.json";;
+    prebuild_null) jq '.prebuild=null' "$MOCK_DIR/resource.json";;
+    prebuild_missing) jq 'del(.prebuild)' "$MOCK_DIR/resource.json";;
     safeguards) jq '.idle_timeout_minutes=30' "$MOCK_DIR/resource.json";;
     *) cat "$MOCK_DIR/resource.json";;
    esac;;
@@ -131,6 +136,10 @@ run_case missing_budget --included-core-hours ''
 [ "$status" -ne 0 ]; no_creation
 run_case owner --billing-owner unknown
 [ "$status" -ne 0 ]; no_creation
+run_case scope
+[ "$status" -ne 0 ]; no_creation
+jq -e '.error | startswith("Cannot establish Codespaces billing ownership. Cause: gh: This API operation needs the \"codespace\" scope")' "$output/result.json" >/dev/null
+grep -q 'needs the "codespace" scope' "$output/preflight-options.stderr"
 run_case provision
 [ "$status" -ne 0 ]; [ ! -f "$tmp/resource.json" ]
 run_case provision_timeout --provision-timeout 1
@@ -142,6 +151,10 @@ run_case success
 jq -e '.ref == "1111111111111111111111111111111111111111" and .machine == "small" and .idle_timeout_minutes == 5' "$tmp/request.json" >/dev/null
 jq -e '.commit == "1111111111111111111111111111111111111111" and .cleanup == "deleted" and .exit_code == 0 and .estimated_usage.actual_billing == false' "$output/result.json" >/dev/null
 grep -q '^synthetic success$' "$output/stdout.log"
+jq -e '.reported_usage.items == [{"sku":"Codespaces compute 2-core","unit_type":"Hours","quantity":2,"net_amount":0},{"sku":"Codespaces storage","unit_type":"GigabyteHours","quantity":40,"net_amount":0}] and (.reported_usage.period | test("^[0-9]{4}-[0-9]{2}$"))' "$output/result.json" >/dev/null
+run_case billing_unavailable
+[ "$status" -eq 0 ]; cleaned
+jq -e '.reported_usage == null' "$output/result.json" >/dev/null
 run_case wrong_commit
 [ "$status" -ne 0 ]; cleaned
 ! grep -q '^synthetic success$' "$output/stdout.log"
@@ -172,6 +185,10 @@ run_case artifact_success --artifact results.txt
 jq -e '.artifact_status == "downloaded"' "$output/result.json" >/dev/null
 run_case prebuild
 [ "$status" -ne 0 ]; cleaned
+run_case prebuild_null
+[ "$status" -eq 0 ]; cleaned
+run_case prebuild_missing
+[ "$status" -ne 0 ]; cleaned
 run_case safeguards
 [ "$status" -ne 0 ]; cleaned
 run_case cleanup
@@ -186,4 +203,4 @@ run_case ownership
 [ "$status" -ne 0 ]; [ -f "$tmp/resource.json" ]
 ! grep -q '^delete$' "$tmp/mutations"
 for repetition in 1 2 3; do run_case success; [ "$status" -eq 0 ]; cleaned; done
-printf '%s\n' 'PASS: mocked authentication, refs, machines, budget, ownership, provisioning, execution, timeout, artifacts, cleanup and repeated runs.'
+printf '%s\n' 'PASS: mocked authentication, preflight diagnostics, billing usage, prebuild status, refs, machines, budget, ownership, provisioning, execution, timeout, artifacts, cleanup and repeated runs.'
