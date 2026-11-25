@@ -166,7 +166,7 @@ run_case billing_unavailable
 jq -e '.reported_usage == null' "$output/result.json" >/dev/null
 run_case wrong_commit
 [ "$status" -ne 0 ]; cleaned
-! grep -q '^synthetic success$' "$output/stdout.log"
+if grep -q '^synthetic success$' "$output/stdout.log"; then exit 1; else [ "$?" -eq 1 ]; fi
 literal_command=$(cat <<'COMMAND'
 printf '%s\n' 'quotes "double" and '\''single'\''; $(literal), `literal`, $HOME'
 cat <<'INNER'
@@ -176,6 +176,8 @@ COMMAND
 )
 run_case literal --command "$literal_command"
 [ "$status" -eq 0 ]; cleaned
+# Match the literal command text after remote execution.
+# shellcheck disable=SC2016
 printf '%s\n' 'quotes "double" and '\''single'\''; $(literal), `literal`, $HOME' CODESPACE_SANDBOX_COMMAND_EOF > "$tmp/expected"
 cmp "$tmp/expected" "$output/stdout.log"
 run_case command --command 'printf "synthetic failure\n" >&2; exit 23'
@@ -210,6 +212,6 @@ run_case verify_cleanup
 jq -e '.cleanup != "deleted"' "$output/result.json" >/dev/null
 run_case ownership
 [ "$status" -ne 0 ]; [ -f "$tmp/resource.json" ]
-! grep -q '^delete$' "$tmp/mutations"
-for repetition in 1 2 3; do run_case success; [ "$status" -eq 0 ]; cleaned; done
+if grep -q '^delete$' "$tmp/mutations"; then exit 1; else [ "$?" -eq 1 ]; fi
+for _ in 1 2 3; do run_case success; [ "$status" -eq 0 ]; cleaned; done
 printf '%s\n' 'PASS: mocked authentication, preflight diagnostics, billing usage, prebuild status, refs, machines, budget confirmation, ownership, provisioning, execution, timeout, artifacts, cleanup and repeated runs.'

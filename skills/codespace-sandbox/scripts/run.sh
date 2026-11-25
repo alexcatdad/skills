@@ -2,7 +2,7 @@
 # Disposable Codespaces runner. No account-wide mutations.
 set -u
 umask 077
-repo= ref= command= machine= output= artifact= billing_owner= zero_budget=0
+repo='' ref='' command='' machine='' output='' artifact='' billing_owner='' zero_budget=0
 timeout=300 provision_timeout=600
 usage() {
   echo 'Usage: run.sh --repo OWNER/REPO --ref REF --command COMMAND --output DIR --billing-owner LOGIN --zero-budget-confirmed [--machine NAME] [--timeout SECONDS] [--provision-timeout SECONDS] [--artifact RELATIVE_PATH]' >&2
@@ -38,8 +38,8 @@ for dependency in gh jq ssh ssh-keygen; do command -v "$dependency" >/dev/null 2
 mkdir -p "$output" || exit 2
 output=$(cd "$output" && pwd) || exit 2
 work=$(mktemp -d "${TMPDIR:-/tmp}/codespace-sandbox.XXXXXXXX") || exit 2
-name= login= sha= cpus= disk= estimated_core= estimated_storage=
-cleanup=not_created error= exit_code=1 duration=0 created=0 child= watchdog= ending=0 sequence=0
+name='' login='' sha='' cpus='' disk='' estimated_core='' estimated_storage=''
+cleanup=not_created error='' exit_code=1 duration=0 created=0 child='' watchdog='' ending=0 sequence=0
 command_exit_code=null artifact_status=not_requested reported_usage=null
 marker="sandbox-$(date +%s)-${work##*.}"
 # A portable watchdog bounds CLI calls without GNU timeout. Children are reaped.
@@ -86,7 +86,7 @@ bounded() {
   ) </dev/null >/dev/null 2>&1 & watchdog=$!
   wait "$child"; bounded_status=$?
   cancel_watchdog || bounded_status=1
-  child= watchdog=
+  child='' watchdog=''
   if [ -f "$timed_out" ]; then return 124; fi
   return "$bounded_status"
 }
@@ -179,7 +179,7 @@ preflight user user >"$work/user.json" || preflight_fail 'Cannot establish authe
 login=$(jq -er .login "$work/user.json") || fail 'Missing authenticated identity.'
 # A $0 Codespaces budget that stops usage at the limit is what prevents charges;
 # no API reports remaining included capacity. The user confirms that setting.
-[ -n "$billing_owner" ] && [ "$zero_budget" -eq 1 ] || fail 'Provide the billing owner and --zero-budget-confirmed after confirming its Codespaces budget is $0 and stops usage at the limit.'
+[ -n "$billing_owner" ] && [ "$zero_budget" -eq 1 ] || fail "Provide the billing owner and --zero-budget-confirmed after confirming its Codespaces budget is \$0 and stops usage at the limit."
 preflight commit "repos/$repo/commits/$ref" >"$work/commit.json" || preflight_fail 'Invalid repository or ref.'
 sha=$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' "$work/commit.json") || fail 'Cannot resolve exact commit.'
 preflight options -X GET "repos/$repo/codespaces/new" -f "ref=$sha" >"$work/options.json" || preflight_fail 'Cannot establish Codespaces billing ownership.'
@@ -235,12 +235,16 @@ remote_status="/tmp/$marker.status"
   echo 'set -eu'
   printf 'expected=%s\n' "$sha"
   printf 'cd /workspaces/%s\n' "${repo#*/}"
+  # Expand the checkout check in the remote shell.
+  # shellcheck disable=SC2016
   echo '[ "$(git rev-parse HEAD)" = "$expected" ] || { echo "Checkout does not match requested commit" >&2; exit 125; }'
   printf "cat > /tmp/%s.command <<'%s'\n" "$marker" "$delimiter"
   printf '%s\n' "$command"
   printf '%s\n' "$delimiter"
   echo 'set +e'
   printf 'sh /tmp/%s.command\n' "$marker"
+  # Capture the exit status in the remote shell.
+  # shellcheck disable=SC2016
   printf 'status=$?; printf '\''%%s\\n'\'' "$status" > %s\n' "$remote_status"
   printf 'rm -f /tmp/%s.command\n' "$marker"
   echo 'exit 0'
