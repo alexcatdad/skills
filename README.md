@@ -77,6 +77,6 @@ Do not add machine state, credentials, histories or agent session data.
 
 ## Releases
 
-Publish stable releases from `main` after the required checks pass. Use a
-`vMAJOR.MINOR.PATCH` tag and leave published tags fixed. Include changes that
-affect installations or skill behavior in the release notes.
+GitHub Actions publishes the next patch release after both CI jobs pass on
+`main`. Each release has a `vMAJOR.MINOR.PATCH` tag for the validated commit.
+Major and minor releases are versioned explicitly. Published tags stay fixed.
