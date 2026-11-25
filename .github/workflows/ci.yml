@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate packages and behavior
+        run: sh tests/check.sh
+      - name: Validate GitHub skill packaging when supported
+        run: |
+          if gh skill publish --help >/dev/null 2>&1; then
+            gh skill publish --dry-run
+          else
+            echo 'SKIP: runner GitHub CLI does not provide gh skill; local structure and metadata checks passed.'
+          fi
