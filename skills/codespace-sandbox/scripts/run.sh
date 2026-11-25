@@ -22,14 +22,15 @@ while [ "$#" -gt 0 ]; do
   esac
   shift 2
 done
-[ -n "$repo" ] && [ -n "$ref" ] && [ -n "$command" ] && [ -n "$output" ] || usage
+if [ -z "$repo" ] || [ -z "$ref" ] || [ -z "$command" ] || [ -z "$output" ]; then usage; fi
 case $repo in *[!A-Za-z0-9_./-]*|/*|*/|*/../*|../*|*/..|*//*|*/*/*) usage;; */*) :;; *) usage;; esac
 case $ref in -*|*[!A-Za-z0-9_./-]*) usage;; esac
 case $output in /*) :;; *) echo 'Output directory must be an absolute path.' >&2; usage;; esac
 case $timeout:$provision_timeout in *[!0-9:]*|:*|*:) usage;; esac
 case $timeout in 0*) usage;; esac
 case $provision_timeout in 0*) usage;; esac
-[ "$timeout" -gt 0 ] && [ "$timeout" -le 86400 ] && [ "$provision_timeout" -gt 0 ] && [ "$provision_timeout" -le 3600 ] || usage
+if ! { [ "$timeout" -gt 0 ] && [ "$timeout" -le 86400 ] &&
+       [ "$provision_timeout" -gt 0 ] && [ "$provision_timeout" -le 3600 ]; }; then usage; fi
 if [ -n "$artifact" ]; then
   case $artifact in /*|-*|..|../*|*/../*|*/..|*[!A-Za-z0-9_./-]*) usage;; esac
 fi
@@ -179,7 +180,9 @@ preflight user user >"$work/user.json" || preflight_fail 'Cannot establish authe
 login=$(jq -er .login "$work/user.json") || fail 'Missing authenticated identity.'
 # A $0 Codespaces budget that stops usage at the limit is what prevents charges;
 # no API reports remaining included capacity. The user confirms that setting.
-[ -n "$billing_owner" ] && [ "$zero_budget" -eq 1 ] || fail "Provide the billing owner and --zero-budget-confirmed after confirming its Codespaces budget is \$0 and stops usage at the limit."
+if [ -z "$billing_owner" ] || [ "$zero_budget" -ne 1 ]; then
+  fail "Provide the billing owner and --zero-budget-confirmed after confirming its Codespaces budget is \$0 and stops usage at the limit."
+fi
 preflight commit "repos/$repo/commits/$ref" >"$work/commit.json" || preflight_fail 'Invalid repository or ref.'
 sha=$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' "$work/commit.json") || fail 'Cannot resolve exact commit.'
 preflight options -X GET "repos/$repo/codespaces/new" -f "ref=$sha" >"$work/options.json" || preflight_fail 'Cannot establish Codespaces billing ownership.'
