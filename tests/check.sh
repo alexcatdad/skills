@@ -3,7 +3,7 @@ set -eu
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
-for skill in artifact codespace-sandbox agent-instructions tool-selection clarify; do
+for skill in artifact codespace-sandbox agent-instructions tool-selection clarify realistic-3d-modeling; do
   package=skills/$skill
   [ -f "$package/SKILL.md" ]
   [ "$(head -1 "$package/SKILL.md")" = --- ]
