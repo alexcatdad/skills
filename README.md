@@ -5,6 +5,7 @@ belong in their owning projects.
 
 | Skill | Purpose |
 | --- | --- |
+| `realistic-3d-modeling` | Build orbitable 3D assets from references and verify their appearance through matched renders and independent visual review. |
 | `agent-instructions` | Write and edit agent-facing instructions as keyword statements, and place each rule in the global file, a skill or a hook. |
 | `tool-selection` | Research and recommend a tool, library, language or stack before one is chosen. |
 | `clarify` | Settle goal, scope and done-criteria one question at a time before building. |
